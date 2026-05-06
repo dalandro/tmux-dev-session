@@ -12,7 +12,7 @@ Tmux workflow for parallel feature development with git worktrees. Each feature 
 ## Install
 
 ```bash
-git clone <repo-url> ~/tmux-dev-session
+git clone https://github.com/dalandro/tmux-dev-session ~/tmux-dev-session
 cd ~/tmux-dev-session
 ./install.sh
 ```
@@ -63,9 +63,11 @@ new-task api kit-1234-my-feature --name kit-1234 # custom window name
 Each window:
 - Left pane: console in the worktree
 - Right pane: `claude --resume` in the worktree
-- Window named by ticket ID (e.g. `kit-1234`) or full branch name
+- Window named by ticket ID (e.g. `kit-1234`) or branch name
 
 Repos are expected at `~/<repo>`. Worktrees are created at `~/worktrees/<repo>/<branch>`.
+
+Branch names containing `/` (e.g. `release/1.74.0`) are sanitized to `-` for directory and window names (`release-1.74.0`).
 
 ---
 
