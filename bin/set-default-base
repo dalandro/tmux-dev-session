@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="${1:-}"
+BASE="${2:-}"
+
+[[ -z "$REPO" || -z "$BASE" ]] && { echo "Usage: set-default-base <repo> <branch>"; exit 1; }
+
+CONFIG_DIR="$HOME/.config/dev-sessions"
+CONFIG_FILE="$CONFIG_DIR/defaults"
+
+mkdir -p "$CONFIG_DIR"
+touch "$CONFIG_FILE"
+
+if grep -q "^${REPO}=" "$CONFIG_FILE"; then
+  sed -i "s|^${REPO}=.*|${REPO}=${BASE}|" "$CONFIG_FILE"
+else
+  echo "${REPO}=${BASE}" >> "$CONFIG_FILE"
+fi
+
+echo "Default base for $REPO set to: $BASE"

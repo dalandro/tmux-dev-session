@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_FILE="$HOME/.config/dev-sessions/defaults"
+WORKTREES_DIR="$HOME/worktrees"
+SESSION="dev"
+
+REPO=""
+BRANCH=""
+WINDOW_NAME_OVERRIDE=""
+BASE_OVERRIDE=""
+
+usage() {
+  echo "Usage: new-task <repo> [branch] [--name <window-name>] [--base <base-branch>]"
+  echo "  branch omitted: uses configured default base for repo"
+  exit 1
+}
+
+[[ $# -eq 0 ]] && usage
+REPO="$1"
+shift
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --name|-n) WINDOW_NAME_OVERRIDE="${2:-}"; shift 2 ;;
+    --base)    BASE_OVERRIDE="${2:-}"; shift 2 ;;
+    -*)        echo "Unknown option: $1"; usage ;;
+    *)
+      if [[ -z "$BRANCH" ]]; then
+        BRANCH="$1"
+      else
+        echo "Unexpected argument: $1"; usage
+      fi
+      shift
+      ;;
+  esac
+done
+
+REPO_PATH="$HOME/$REPO"
+
+if ! git -C "$REPO_PATH" rev-parse --git-dir &>/dev/null; then
+  echo "Error: $REPO_PATH is not a git repository"
+  exit 1
+fi
+
+# No branch given — use configured default (work on it directly)
+if [[ -z "$BRANCH" ]]; then
+  DEFAULT_BASE=""
+  if [[ -f "$CONFIG_FILE" ]]; then
+    DEFAULT_BASE=$(grep "^${REPO}=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2 || true)
+  fi
+  if [[ -z "$DEFAULT_BASE" ]]; then
+    echo "Error: no branch given and no default configured for '$REPO'"
+    echo "Run: set-default-base $REPO <branch>"
+    exit 1
+  fi
+  BRANCH="$DEFAULT_BASE"
+fi
+
+WORKTREE_PATH="$WORKTREES_DIR/$REPO/$BRANCH"
+mkdir -p "$WORKTREES_DIR/$REPO"
+
+if [[ ! -d "$WORKTREE_PATH" ]]; then
+  echo "Fetching origin..."
+  git -C "$REPO_PATH" fetch origin
+
+  if git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+    echo "Branch '$BRANCH' exists locally. Creating worktree..."
+    git -C "$REPO_PATH" worktree add "$WORKTREE_PATH" "$BRANCH"
+  elif git -C "$REPO_PATH" show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+    echo "Branch '$BRANCH' exists on remote. Creating worktree..."
+    git -C "$REPO_PATH" worktree add "$WORKTREE_PATH" -b "$BRANCH" "origin/$BRANCH"
+  else
+    if [[ -n "$BASE_OVERRIDE" ]]; then
+      BASE_BRANCH="$BASE_OVERRIDE"
+    else
+      DEFAULT_BASE=""
+      if [[ -f "$CONFIG_FILE" ]]; then
+        DEFAULT_BASE=$(grep "^${REPO}=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2 || true)
+      fi
+      if [[ -n "$DEFAULT_BASE" ]]; then
+        read -rp "Base branch [${DEFAULT_BASE}]: " BASE_BRANCH
+        BASE_BRANCH="${BASE_BRANCH:-$DEFAULT_BASE}"
+      else
+        read -rp "Base branch: " BASE_BRANCH
+        [[ -z "$BASE_BRANCH" ]] && { echo "Error: base branch required"; exit 1; }
+      fi
+    fi
+    echo "Creating '$BRANCH' from origin/$BASE_BRANCH..."
+    git -C "$REPO_PATH" worktree add "$WORKTREE_PATH" -b "$BRANCH" "origin/$BASE_BRANCH"
+  fi
+else
+  echo "Worktree exists, continuing..."
+fi
+
+# Window name: explicit override > ticket ID regex > full branch name
+if [[ -n "$WINDOW_NAME_OVERRIDE" ]]; then
+  WINDOW_NAME="$WINDOW_NAME_OVERRIDE"
+else
+  WINDOW_NAME=$(echo "$BRANCH" | grep -oiE '^[a-z]+-[0-9]+' || echo "$BRANCH")
+fi
+
+if tmux list-windows -t "$SESSION" -F "#{window_name}" 2>/dev/null | grep -qxF "$WINDOW_NAME"; then
+  echo "Window '$WINDOW_NAME' already open, switching..."
+  tmux select-window -t "$SESSION:$WINDOW_NAME"
+else
+  tmux new-window -t "$SESSION" -n "$WINDOW_NAME" -c "$WORKTREE_PATH"
+  tmux split-window -t "$SESSION:$WINDOW_NAME" -h -p 65 -c "$WORKTREE_PATH"
+  tmux send-keys -t "$SESSION:$WINDOW_NAME.1" "claude --resume" Enter
+  tmux select-pane -t "$SESSION:$WINDOW_NAME.0"
+fi
+
+echo "Window '$WINDOW_NAME' ready: $REPO/$BRANCH"
