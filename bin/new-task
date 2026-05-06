@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# TODO: make branch optional — support working directly on a repo without a branch (e.g. pushing to main or no remote)
 set -euo pipefail
 
 CONFIG_FILE="$HOME/.config/dev-sessions/defaults"
@@ -14,6 +15,13 @@ usage() {
   echo "Usage: new-task <repo> [branch] [--name <window-name>] [--base <base-branch>]"
   echo "  branch omitted: uses configured default base for repo"
   exit 1
+}
+
+get_default_base() {
+  local repo="$1"
+  if [[ -f "$CONFIG_FILE" ]]; then
+    grep "^${repo}=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2 || true
+  fi
 }
 
 [[ $# -eq 0 ]] && usage
@@ -45,19 +53,19 @@ fi
 
 # No branch given — use configured default (work on it directly)
 if [[ -z "$BRANCH" ]]; then
-  DEFAULT_BASE=""
-  if [[ -f "$CONFIG_FILE" ]]; then
-    DEFAULT_BASE=$(grep "^${REPO}=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2 || true)
-  fi
-  if [[ -z "$DEFAULT_BASE" ]]; then
+  BRANCH=$(get_default_base "$REPO")
+  if [[ -z "$BRANCH" ]]; then
     echo "Error: no branch given and no default configured for '$REPO'"
     echo "Run: set-default-base $REPO <branch>"
     exit 1
   fi
-  BRANCH="$DEFAULT_BASE"
 fi
 
-WORKTREE_PATH="$WORKTREES_DIR/$REPO/$BRANCH"
+# Sanitize branch name for use as filesystem path and tmux window name
+# git allows '/' in branch names; tmux and filesystem paths do not work well with them
+BRANCH_SAFE=$(echo "$BRANCH" | tr '/' '-')
+
+WORKTREE_PATH="$WORKTREES_DIR/$REPO/$BRANCH_SAFE"
 mkdir -p "$WORKTREES_DIR/$REPO"
 
 if [[ ! -d "$WORKTREE_PATH" ]]; then
@@ -74,10 +82,7 @@ if [[ ! -d "$WORKTREE_PATH" ]]; then
     if [[ -n "$BASE_OVERRIDE" ]]; then
       BASE_BRANCH="$BASE_OVERRIDE"
     else
-      DEFAULT_BASE=""
-      if [[ -f "$CONFIG_FILE" ]]; then
-        DEFAULT_BASE=$(grep "^${REPO}=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2 || true)
-      fi
+      DEFAULT_BASE=$(get_default_base "$REPO")
       if [[ -n "$DEFAULT_BASE" ]]; then
         read -rp "Base branch [${DEFAULT_BASE}]: " BASE_BRANCH
         BASE_BRANCH="${BASE_BRANCH:-$DEFAULT_BASE}"
@@ -93,11 +98,11 @@ else
   echo "Worktree exists, continuing..."
 fi
 
-# Window name: explicit override > ticket ID regex > full branch name
+# Window name: explicit override > ticket ID regex > sanitized branch name
 if [[ -n "$WINDOW_NAME_OVERRIDE" ]]; then
   WINDOW_NAME="$WINDOW_NAME_OVERRIDE"
 else
-  WINDOW_NAME=$(echo "$BRANCH" | grep -oiE '^[a-z]+-[0-9]+' || echo "$BRANCH")
+  WINDOW_NAME=$(echo "$BRANCH_SAFE" | grep -oiE '^[a-z]+-[0-9]+' || echo "$BRANCH_SAFE")
 fi
 
 if tmux list-windows -t "$SESSION" -F "#{window_name}" 2>/dev/null | grep -qxF "$WINDOW_NAME"; then
