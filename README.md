@@ -11,17 +11,19 @@ Tmux workflow for parallel feature development with git worktrees. Each feature 
 
 ## Install
 
-```bash
-git clone https://github.com/dalandro/tmux-dev-session ~/tmux-dev-session
-cd ~/tmux-dev-session
-./install.sh
-```
-
-Reinstall after changes:
+One-liner:
 
 ```bash
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/dalandro/tmux-dev-session/main/install.sh | bash
 ```
+
+Or inspect the script before running it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dalandro/tmux-dev-session/main/install.sh
+```
+
+To update, re-run the one-liner — it pulls latest and reinstalls automatically.
 
 ## Setup
 
@@ -88,6 +90,35 @@ set-default-base <repo> <branch>
 ```
 
 The current default is shown in the tmux status bar, updating as you switch panes.
+
+## Development
+
+### Running tests
+
+Tests use [bats-core](https://github.com/bats-core/bats-core), [bats-assert](https://github.com/bats-core/bats-assert), and [bats-support](https://github.com/bats-core/bats-support). These are bundled as git submodules under `tests/libs/` — no separate install needed. If you cloned without `--recurse-submodules`, fetch them with:
+
+```bash
+git submodule update --init --recursive
+```
+
+Then run the full suite:
+
+```bash
+./tests/libs/bats-core/bin/bats tests/
+```
+
+Tests are isolated — each one gets a fresh temporary `$HOME` and a fake `$PATH` for mocking commands like `tmux`. Nothing writes outside that temp directory.
+
+### What's covered
+
+| Test file | What it tests |
+|---|---|
+| `set-default-base.bats` | Config writes, updates, dir creation |
+| `tmux-default-base.bats` | Repo detection from pane path, config lookup |
+| `new-task-args.bats` | Arg parsing, missing-branch error, invalid repo |
+| `close-task-args.bats` | Missing-arg and unknown-ticket errors |
+
+Integration tests (worktree creation, tmux window lifecycle) are not covered — those require a live tmux session and git remote.
 
 ## Layout
 
