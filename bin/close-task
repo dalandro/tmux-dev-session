@@ -7,21 +7,24 @@ WORKTREES_DIR="$HOME/worktrees"
 
 [[ -z "$TICKET" ]] && { echo "Usage: close-task <ticket-id-or-branch>"; exit 1; }
 
+# Sanitize input the same way new-task sanitizes branch names for directories
+TICKET_SAFE=$(echo "$TICKET" | tr '/' '-')
+
 WORKTREE_PATH=""
 REPO=""
-BRANCH=""
+BRANCH_SAFE=""
 
 for repo_dir in "$WORKTREES_DIR"/*/; do
   [[ -d "$repo_dir" ]] || continue
   repo_name=$(basename "$repo_dir")
   for wt in "$repo_dir"*/; do
     [[ -d "$wt" ]] || continue
-    branch=$(basename "$wt")
-    ticket_id=$(echo "$branch" | grep -oiE '^[a-z]+-[0-9]+' || echo "$branch")
-    if [[ "$ticket_id" == "$TICKET" ]] || [[ "$branch" == "$TICKET" ]]; then
+    dir_name=$(basename "$wt")
+    ticket_id=$(echo "$dir_name" | grep -oiE '^[a-z]+-[0-9]+' || echo "$dir_name")
+    if [[ "$ticket_id" == "$TICKET_SAFE" ]] || [[ "$dir_name" == "$TICKET_SAFE" ]]; then
       WORKTREE_PATH="$wt"
       REPO="$repo_name"
-      BRANCH="$branch"
+      BRANCH_SAFE="$dir_name"
       break 2
     fi
   done
@@ -45,11 +48,11 @@ if [[ "$UNPUSHED" -gt 0 ]]; then
   [[ "$CONFIRM" =~ ^[Yy]$ ]] || exit 1
 fi
 
-WINDOW_NAME=$(echo "$BRANCH" | grep -oiE '^[a-z]+-[0-9]+' || echo "$BRANCH")
+WINDOW_NAME=$(echo "$BRANCH_SAFE" | grep -oiE '^[a-z]+-[0-9]+' || echo "$BRANCH_SAFE")
 if tmux list-windows -t "$SESSION" -F "#{window_name}" 2>/dev/null | grep -qxF "$WINDOW_NAME"; then
   tmux kill-window -t "$SESSION:$WINDOW_NAME"
 fi
 
 git -C "$HOME/$REPO" worktree remove "$WORKTREE_PATH"
 
-echo "Closed $REPO/$BRANCH"
+echo "Closed $REPO/$BRANCH_SAFE"
