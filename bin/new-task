@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
-# TODO: make branch optional — support working directly on a repo without a branch (e.g. pushing to main or no remote)
 set -euo pipefail
 
 CONFIG_FILE="$HOME/.config/dev-sessions/defaults"
 WORKTREES_DIR="$HOME/worktrees"
-SESSION="dev"
+SESSION="${TMUX_DEV_SESSION:-dev}"
 
 REPO=""
 BRANCH=""
 WINDOW_NAME_OVERRIDE=""
 BASE_OVERRIDE=""
+DETACH=false
 
 usage() {
-  echo "Usage: new-task <repo> [branch] [--name <window-name>] [--base <base-branch>]"
-  echo "  branch omitted: uses configured default base for repo"
+  echo "Usage: new-task <repo> <branch> [--name <window-name>] [--base <base-branch>] [--detach]"
+  echo "  --base   <base>   branch to fork from when <branch> doesn't yet exist (overrides configured default)"
+  echo "  --name   <name>   custom tmux window name (default: sanitized branch)"
+  echo "  --detach          create a detached-HEAD worktree at <branch>'s commit (use when <branch> is checked out elsewhere)"
   exit 1
 }
 
@@ -32,6 +34,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --name|-n) WINDOW_NAME_OVERRIDE="${2:-}"; shift 2 ;;
     --base)    BASE_OVERRIDE="${2:-}"; shift 2 ;;
+    --detach)  DETACH=true; shift ;;
     -*)        echo "Unknown option: $1"; usage ;;
     *)
       if [[ -z "$BRANCH" ]]; then
@@ -44,21 +47,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+[[ -z "$BRANCH" ]] && { echo "Error: branch required"; usage; }
+
 REPO_PATH="$HOME/$REPO"
 
 if ! git -C "$REPO_PATH" rev-parse --git-dir &>/dev/null; then
   echo "Error: $REPO_PATH is not a git repository"
   exit 1
-fi
-
-# No branch given — use configured default (work on it directly)
-if [[ -z "$BRANCH" ]]; then
-  BRANCH=$(get_default_base "$REPO")
-  if [[ -z "$BRANCH" ]]; then
-    echo "Error: no branch given and no default configured for '$REPO'"
-    echo "Run: set-default-base $REPO <branch>"
-    exit 1
-  fi
 fi
 
 # Sanitize branch name for use as filesystem path and tmux window name
@@ -68,27 +63,56 @@ BRANCH_SAFE=$(echo "$BRANCH" | tr '/' '-')
 WORKTREE_PATH="$WORKTREES_DIR/$REPO/$BRANCH_SAFE"
 mkdir -p "$WORKTREES_DIR/$REPO"
 
-if [[ ! -d "$WORKTREE_PATH" ]]; then
-  echo "Fetching origin..."
-  git -C "$REPO_PATH" fetch origin
+# Returns the worktree path that has $BRANCH checked out (or empty if none).
+branch_checkout_path() {
+  git -C "$REPO_PATH" worktree list --porcelain 2>/dev/null | awk -v b="refs/heads/$BRANCH" '
+    /^worktree /{p=$2}
+    /^branch /{if($2==b){print p; exit}}
+  '
+}
 
-  if git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+if [[ ! -d "$WORKTREE_PATH" ]]; then
+  if git -C "$REPO_PATH" remote get-url origin &>/dev/null; then
+    echo "Fetching origin..."
+    git -C "$REPO_PATH" fetch origin
+  fi
+
+  LOCAL_EXISTS=false; REMOTE_EXISTS=false
+  git -C "$REPO_PATH" show-ref --verify --quiet "refs/heads/$BRANCH" && LOCAL_EXISTS=true
+  git -C "$REPO_PATH" show-ref --verify --quiet "refs/remotes/origin/$BRANCH" && REMOTE_EXISTS=true
+
+  if $DETACH; then
+    [[ -n "$BASE_OVERRIDE" ]] && echo "Warning: --base ignored when --detach is used"
+    if $LOCAL_EXISTS; then REF="$BRANCH"
+    elif $REMOTE_EXISTS; then REF="origin/$BRANCH"
+    else
+      echo "Error: --detach requires existing branch '$BRANCH' (local or remote)"
+      exit 1
+    fi
+    echo "Creating detached worktree at $REF..."
+    git -C "$REPO_PATH" worktree add --detach "$WORKTREE_PATH" "$REF"
+  elif $LOCAL_EXISTS; then
+    [[ -n "$BASE_OVERRIDE" ]] && echo "Warning: --base ignored — branch '$BRANCH' already exists locally"
+    EXISTING=$(branch_checkout_path)
+    if [[ -n "$EXISTING" ]]; then
+      echo "Error: branch '$BRANCH' is already checked out at $EXISTING"
+      echo "Switch branches there first, or re-run with --detach to create a detached worktree."
+      exit 1
+    fi
     echo "Branch '$BRANCH' exists locally. Creating worktree..."
     git -C "$REPO_PATH" worktree add "$WORKTREE_PATH" "$BRANCH"
-  elif git -C "$REPO_PATH" show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+  elif $REMOTE_EXISTS; then
+    [[ -n "$BASE_OVERRIDE" ]] && echo "Warning: --base ignored — branch '$BRANCH' already exists on remote"
     echo "Branch '$BRANCH' exists on remote. Creating worktree..."
     git -C "$REPO_PATH" worktree add "$WORKTREE_PATH" -b "$BRANCH" "origin/$BRANCH"
   else
     if [[ -n "$BASE_OVERRIDE" ]]; then
       BASE_BRANCH="$BASE_OVERRIDE"
     else
-      DEFAULT_BASE=$(get_default_base "$REPO")
-      if [[ -n "$DEFAULT_BASE" ]]; then
-        read -rp "Base branch [${DEFAULT_BASE}]: " BASE_BRANCH
-        BASE_BRANCH="${BASE_BRANCH:-$DEFAULT_BASE}"
-      else
-        read -rp "Base branch: " BASE_BRANCH
-        [[ -z "$BASE_BRANCH" ]] && { echo "Error: base branch required"; exit 1; }
+      BASE_BRANCH=$(get_default_base "$REPO")
+      if [[ -z "$BASE_BRANCH" ]]; then
+        echo "Error: branch '$BRANCH' does not exist; pass --base <branch> or run: set-default-base $REPO <branch>"
+        exit 1
       fi
     fi
     echo "Creating '$BRANCH' from origin/$BASE_BRANCH..."
@@ -98,19 +122,15 @@ else
   echo "Worktree exists, continuing..."
 fi
 
-# Window name: explicit override > ticket ID regex > sanitized branch name
-if [[ -n "$WINDOW_NAME_OVERRIDE" ]]; then
-  WINDOW_NAME="$WINDOW_NAME_OVERRIDE"
-else
-  WINDOW_NAME=$(echo "$BRANCH_SAFE" | grep -oiE '^[a-z]+-[0-9]+' || echo "$BRANCH_SAFE")
-fi
+# Window name: explicit override > sanitized branch name. Use --name for short names.
+WINDOW_NAME="${WINDOW_NAME_OVERRIDE:-$BRANCH_SAFE}"
 
 if tmux list-windows -t "$SESSION" -F "#{window_name}" 2>/dev/null | grep -qxF "$WINDOW_NAME"; then
   echo "Window '$WINDOW_NAME' already open, switching..."
   tmux select-window -t "$SESSION:$WINDOW_NAME"
 else
   tmux new-window -t "$SESSION" -n "$WINDOW_NAME" -c "$WORKTREE_PATH"
-  tmux split-window -t "$SESSION:$WINDOW_NAME" -h -p 65 -c "$WORKTREE_PATH"
+  tmux split-window -t "$SESSION:$WINDOW_NAME" -h -l 65% -c "$WORKTREE_PATH"
   tmux send-keys -t "$SESSION:$WINDOW_NAME.1" "claude --resume" Enter
   tmux select-pane -t "$SESSION:$WINDOW_NAME.0"
 fi

@@ -2,19 +2,16 @@
 # tmux-dev-session installer
 # https://github.com/dalandro/tmux-dev-session
 #
-# Usage (one-liner):
-#   curl -fsSL https://raw.githubusercontent.com/dalandro/tmux-dev-session/main/install.sh | bash
-#
-# Or clone and run:
+# Run from a clone of the repo:
 #   git clone https://github.com/dalandro/tmux-dev-session ~/tmux-dev-session
 #   bash ~/tmux-dev-session/install.sh
+#
+# For the curl one-liner, use curl-install.sh instead.
 #
 # Idempotent: safe to run multiple times.
 
 set -euo pipefail
 
-REPO_URL="https://github.com/dalandro/tmux-dev-session.git"
-CLONE_DIR="$HOME/tmux-dev-session"
 INSTALL_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/dev-sessions"
 TMUX_CONF="$HOME/.tmux.conf"
@@ -35,27 +32,13 @@ info() { printf "${GREEN}>${NC} %s\n" "$1"; }
 warn() { printf "${YELLOW}!${NC} %s\n" "$1"; }
 fail() { printf "${RED}x${NC} %s\n" "$1"; exit 1; }
 
-# ── Curl-pipe detection ───────────────────────────────────────
-# When piped via curl | bash, BASH_SOURCE[0] is empty or "bash".
-# In that case, clone the repo and re-exec the real install.sh.
+# ── Locate repo dir ───────────────────────────────────────────
 
-SCRIPT_DIR=""
-if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "bash" ]]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]}" == "bash" ]]; then
+    fail "install.sh must be run from a clone (not piped). Use curl-install.sh for the one-liner."
 fi
-
-if [[ -z "$SCRIPT_DIR" || ! -d "$SCRIPT_DIR/bin" ]]; then
-    info "Running via curl — cloning repo..."
-    if [[ -d "$CLONE_DIR/.git" ]]; then
-        info "Repo exists at $CLONE_DIR, pulling latest..."
-        git -C "$CLONE_DIR" pull --ff-only
-    else
-        git clone "$REPO_URL" "$CLONE_DIR"
-    fi
-    exec bash "$CLONE_DIR/install.sh"
-fi
-
-REPO_DIR="$SCRIPT_DIR"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -d "$REPO_DIR/bin" ]] || fail "Could not find bin/ next to install.sh — is this really a clone of the repo?"
 
 # ── Prerequisites ─────────────────────────────────────────────
 
@@ -80,7 +63,8 @@ if ! grep -qF "$TMUX_MARKER" "$TMUX_CONF" 2>/dev/null; then
     cat >> "$TMUX_CONF" <<'EOF'
 # tmux-dev-session
 set -g status-right '#(tmux-default-base) | %H:%M'
-set -g status-interval 10
+set -g status-interval 60
+set-hook -g pane-focus-in 'refresh-client -S'
 EOF
     info "Appended status bar config to $TMUX_CONF"
 else
@@ -99,8 +83,6 @@ fi
 printf "Set your defaults (do this once per repo):\n"
 printf "  ${GREEN}set-default-base${NC} <repo> <branch>      # e.g. set-default-base api release/1.0.0\n"
 printf "\n"
-printf "  More defaults coming — agent/model selector is planned.\n"
-printf "  See TODO.md for details.\n"
 printf "\n"
 printf "Quick start:\n"
 printf "  ${GREEN}dev${NC}                                   # start/attach session\n"

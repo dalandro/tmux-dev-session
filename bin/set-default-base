@@ -13,7 +13,8 @@ mkdir -p "$CONFIG_DIR"
 touch "$CONFIG_FILE"
 
 if grep -q "^${REPO}=" "$CONFIG_FILE"; then
-  sed -i "s|^${REPO}=.*|${REPO}=${BASE}|" "$CONFIG_FILE"
+  # Portable sed -i (works on GNU and BSD/macOS)
+  sed -i.bak "s|^${REPO}=.*|${REPO}=${BASE}|" "$CONFIG_FILE" && rm -f "$CONFIG_FILE.bak"
 else
   echo "${REPO}=${BASE}" >> "$CONFIG_FILE"
 fi

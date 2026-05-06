@@ -11,16 +11,23 @@ Tmux workflow for parallel feature development with git worktrees. Each feature 
 
 ## Install
 
-One-liner:
+One-liner (clones the repo to `~/tmux-dev-session` and runs the installer):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dalandro/tmux-dev-session/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dalandro/tmux-dev-session/main/curl-install.sh | bash
 ```
 
-Or inspect the script before running it:
+Or inspect the bootstrap script before running it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dalandro/tmux-dev-session/main/install.sh
+curl -fsSL https://raw.githubusercontent.com/dalandro/tmux-dev-session/main/curl-install.sh
+```
+
+Or clone manually and run the installer directly:
+
+```bash
+git clone https://github.com/dalandro/tmux-dev-session ~/tmux-dev-session
+bash ~/tmux-dev-session/install.sh
 ```
 
 To update, re-run the one-liner — it pulls latest and reinstalls automatically.
@@ -49,25 +56,29 @@ Creates (or attaches to) a tmux session named `dev` with a manager window.
 **Open a feature window:**
 
 ```bash
-new-task <repo> [branch] [--name <window-name>] [--base <base-branch>]
+new-task <repo> <branch> [--name <window-name>] [--base <base-branch>] [--detach]
 ```
 
 Examples:
 
 ```bash
-new-task api                                     # worktree on default base branch
-new-task api kit-1234-my-feature                 # new branch, prompts for base
-new-task api kit-1234-my-feature --base main     # new branch from main, no prompt
-new-task api existing-branch                     # existing local or remote branch
+new-task api kit-1234-my-feature                 # new branch from configured default base
+new-task api kit-1234-my-feature --base main     # new branch from explicit base
+new-task api existing-branch                     # checkout existing local or remote branch
 new-task api kit-1234-my-feature --name kit-1234 # custom window name
+new-task api main --detach                       # parallel detached-HEAD worktree on main
 ```
+
+`<branch>` is required. If it doesn't exist, it's created from `--base` (or the configured default base — see [Setup](#setup)). If it already exists locally or remotely, `--base` is ignored with a warning.
+
+If a branch is already checked out (e.g. `main` is the active branch in `~/api`), git refuses a second checkout. Use `--detach` to create a detached-HEAD worktree at the same commit — useful for a separate working tree without disturbing the active checkout.
 
 Each window:
 - Left pane: console in the worktree
 - Right pane: `claude --resume` in the worktree
-- Window named by ticket ID (e.g. `kit-1234`) or branch name
+- Window named by sanitized branch name (use `--name` for a shorter alias, e.g. `--name kit-1234`)
 
-Repos are expected at `~/<repo>`. Worktrees are created at `~/worktrees/<repo>/<branch>`.
+Repos are expected at `~/<repo>` — this layout is currently hardcoded. If you keep code under `~/code/` or `~/work/`, symlink or `cd` workarounds are needed until this is configurable (see TODO). Worktrees are created at `~/worktrees/<repo>/<branch>`.
 
 Branch names containing `/` (e.g. `release/1.74.0`) are sanitized to `-` for directory and window names (`release-1.74.0`).
 
@@ -76,10 +87,12 @@ Branch names containing `/` (e.g. `release/1.74.0`) are sanitized to `-` for dir
 **Close a feature window:**
 
 ```bash
-close-task <ticket-id-or-branch>
+close-task                   # infer from $PWD (must be inside a worktree)
+close-task <branch>          # match a worktree directory by name across repos
+close-task <repo> <branch>   # explicit
 ```
 
-Checks for uncommitted changes and unpushed commits, removes the worktree, closes the tmux window. Does not delete the branch.
+Checks for uncommitted changes (including untracked files) and unpushed commits, removes the worktree, closes the tmux window. Does not delete the branch.
 
 ---
 

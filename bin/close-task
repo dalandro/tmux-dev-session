@@ -1,54 +1,78 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TICKET="${1:-}"
-SESSION="dev"
+SESSION="${TMUX_DEV_SESSION:-dev}"
 WORKTREES_DIR="$HOME/worktrees"
 
-[[ -z "$TICKET" ]] && { echo "Usage: close-task <ticket-id-or-branch>"; exit 1; }
-
-# Sanitize input the same way new-task sanitizes branch names for directories
-TICKET_SAFE=$(echo "$TICKET" | tr '/' '-')
+usage() {
+  echo "Usage: close-task                  # infer from \$PWD (must be inside a worktree)"
+  echo "       close-task <branch>         # match by branch dir name across repos"
+  echo "       close-task <repo> <branch>  # explicit"
+  exit 1
+}
 
 WORKTREE_PATH=""
 REPO=""
 BRANCH_SAFE=""
 
-for repo_dir in "$WORKTREES_DIR"/*/; do
-  [[ -d "$repo_dir" ]] || continue
-  repo_name=$(basename "$repo_dir")
-  for wt in "$repo_dir"*/; do
-    [[ -d "$wt" ]] || continue
-    dir_name=$(basename "$wt")
-    ticket_id=$(echo "$dir_name" | grep -oiE '^[a-z]+-[0-9]+' || echo "$dir_name")
-    if [[ "$ticket_id" == "$TICKET_SAFE" ]] || [[ "$dir_name" == "$TICKET_SAFE" ]]; then
-      WORKTREE_PATH="$wt"
-      REPO="$repo_name"
-      BRANCH_SAFE="$dir_name"
-      break 2
+if [[ $# -eq 0 ]]; then
+  # Infer from current directory: must live under $WORKTREES_DIR/<repo>/<branch>...
+  if [[ "$PWD" != "$WORKTREES_DIR/"*/* ]]; then
+    echo "Error: not inside a worktree under $WORKTREES_DIR"
+    usage
+  fi
+  REL="${PWD#$WORKTREES_DIR/}"
+  REPO="${REL%%/*}"
+  REL="${REL#*/}"
+  BRANCH_SAFE="${REL%%/*}"
+  WORKTREE_PATH="$WORKTREES_DIR/$REPO/$BRANCH_SAFE"
+elif [[ $# -eq 1 ]]; then
+  TARGET=$(echo "$1" | tr '/' '-')
+  for repo_dir in "$WORKTREES_DIR"/*/; do
+    [[ -d "$repo_dir" ]] || continue
+    candidate="$repo_dir$TARGET"
+    if [[ -d "$candidate" ]]; then
+      REPO=$(basename "$repo_dir")
+      BRANCH_SAFE="$TARGET"
+      WORKTREE_PATH="$candidate"
+      break
     fi
   done
-done
-
-if [[ -z "$WORKTREE_PATH" ]]; then
-  echo "Error: no worktree found for '$TICKET'"
-  exit 1
+  if [[ -z "$WORKTREE_PATH" ]]; then
+    echo "Error: no worktree found for '$TARGET' under $WORKTREES_DIR"
+    exit 1
+  fi
+elif [[ $# -eq 2 ]]; then
+  REPO="$1"
+  BRANCH_SAFE=$(echo "$2" | tr '/' '-')
+  WORKTREE_PATH="$WORKTREES_DIR/$REPO/$BRANCH_SAFE"
+  if [[ ! -d "$WORKTREE_PATH" ]]; then
+    echo "Error: worktree not found at $WORKTREE_PATH"
+    exit 1
+  fi
+else
+  usage
 fi
 
-if ! git -C "$WORKTREE_PATH" diff --quiet || ! git -C "$WORKTREE_PATH" diff --cached --quiet; then
-  echo "Error: uncommitted changes in $WORKTREE_PATH"
+if [[ -n "$(git -C "$WORKTREE_PATH" status --porcelain)" ]]; then
+  echo "Error: uncommitted changes (including untracked files) in $WORKTREE_PATH"
   echo "Commit, stash, or discard changes first."
   exit 1
 fi
 
-UNPUSHED=$(git -C "$WORKTREE_PATH" log --oneline "@{u}..HEAD" 2>/dev/null | wc -l || echo "0")
+UNPUSHED=$(git -C "$WORKTREE_PATH" rev-list --count "@{u}..HEAD" 2>/dev/null || echo 0)
 if [[ "$UNPUSHED" -gt 0 ]]; then
   echo "Warning: $UNPUSHED unpushed commit(s) in $WORKTREE_PATH"
   read -rp "Continue anyway? [y/N]: " CONFIRM
   [[ "$CONFIRM" =~ ^[Yy]$ ]] || exit 1
 fi
 
-WINDOW_NAME=$(echo "$BRANCH_SAFE" | grep -oiE '^[a-z]+-[0-9]+' || echo "$BRANCH_SAFE")
+# If invoked from inside the worktree itself, cd out before removing.
+if [[ "$PWD" == "$WORKTREE_PATH"* ]]; then
+  cd "$HOME"
+fi
+
+WINDOW_NAME="$BRANCH_SAFE"
 if tmux list-windows -t "$SESSION" -F "#{window_name}" 2>/dev/null | grep -qxF "$WINDOW_NAME"; then
   tmux kill-window -t "$SESSION:$WINDOW_NAME"
 fi

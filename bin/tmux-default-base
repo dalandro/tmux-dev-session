@@ -5,9 +5,13 @@ CONFIG="$HOME/.config/dev-sessions/defaults"
 PANE_PATH=$(tmux display-message -p '#{pane_current_path}' 2>/dev/null)
 
 # Detect repo from ~/worktrees/<repo>/branch or ~/<repo>
-REPO=$(echo "$PANE_PATH" | sed -n "s|$HOME/worktrees/\([^/]*\)/.*|\1|p")
-if [[ -z "$REPO" ]]; then
-  REPO=$(echo "$PANE_PATH" | sed -n "s|$HOME/\([^/]*\).*|\1|p")
+REPO=""
+if [[ "$PANE_PATH" == "$HOME/worktrees/"*/* ]]; then
+  REPO="${PANE_PATH#$HOME/worktrees/}"
+  REPO="${REPO%%/*}"
+elif [[ "$PANE_PATH" == "$HOME/"* ]]; then
+  REPO="${PANE_PATH#$HOME/}"
+  REPO="${REPO%%/*}"
 fi
 
 DEFAULT=$(grep "^${REPO}=" "$CONFIG" 2>/dev/null | cut -d= -f2 || true)
