@@ -2,6 +2,9 @@
 
 Tmux workflow for parallel feature development with git worktrees. Each feature gets its own window with a console pane and a Claude Code pane, both inside an isolated git worktree.
 
+## Alt names
+- tmux-yoke
+
 ## Requirements
 
 - tmux
