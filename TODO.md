@@ -39,3 +39,6 @@ Keep it short — pointers, not a tmux primer.
 - Add `repos_dir` key to `~/.config/dev-sessions/defaults` (e.g. `repos_dir=~/code`)
 - Default to `$HOME` if unset (preserve current behavior)
 - `tmux-default-base` updates regex/path-match accordingly
+
+## tmux usage info
+First window of session containing quick cheatsheet for using tmux 
